@@ -1,5 +1,4 @@
 process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '1';
-import './lib/OptiShield.js';
 import './config.js';
 import { createRequire } from 'module';
 import path, { join } from 'path';
