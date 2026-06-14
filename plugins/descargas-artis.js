@@ -1,139 +1,27 @@
 import fetch from "node-fetch";
+import ytdl from 'yt-direct';
 
 // Variable global para evitar procesos concurrentes en el comando .artista
 let isDownloadingArtist = false;
 
 // Función auxiliar que descarga un audio a partir de una URL de YouTube
 async function downloadTrack(youtubeUrl) {
-  const encodedUrl = encodeURIComponent(youtubeUrl);
-  const primaryAPI = `https://theadonix-api.vercel.app/api/ytmp3?url=${encodedUrl}`;
-  const backupAPI = `https://api.vreden.my.id/api/ytmp3?url=${encodedUrl}`;
-  let resultJson = null;
-  let lastError = null;
-  const maxAttempts = 2;
-  let usedAPI = 'primary';
+  try {
+    const audio = await ytdl(youtubeUrl, {
+      quality: 'audio',
+      filter: 'audioonly'
+    });
 
-  // Intentar obtener datos con la API principal
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const response = await fetch(primaryAPI);
-      const json = await response.json();
-      if (!json.status || !json.data) {
-        throw new Error("Primary API: No se pudo obtener el enlace de descarga.");
-      }
-      resultJson = json;
-      break;
-    } catch (error) {
-      lastError = error;
-      if (attempt < maxAttempts) continue;
+    const chunks = [];
+    for await (const chunk of audio.stream()) {
+      chunks.push(chunk);
     }
-  }
+    const audioBuffer = Buffer.concat(chunks);
 
-  // Si la API principal falla, usar la de respaldo
-  if (!resultJson) {
-    usedAPI = 'backup';
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const response = await fetch(backupAPI);
-        const json = await response.json();
-        if (json.status !== 200 || !json.result || !json.result.download) {
-          throw new Error("Backup API: No se encontró el enlace de descarga.");
-        }
-        resultJson = json;
-        break;
-      } catch (error) {
-        lastError = error;
-        if (attempt < maxAttempts) continue;
-      }
-    }
+    return { audioBuffer, title: audio.title };
+  } catch (error) {
+    throw error;
   }
-
-  if (!resultJson) {
-    throw lastError;
-  }
-
-  // Extraer el enlace de descarga y título según la estructura de la API
-  let downloadUrl, title;
-  if (resultJson.data) { // Estructura de la API principal
-    downloadUrl = resultJson.data.author?.download || resultJson.data.download;
-    title = resultJson.data.title || "audio";
-  } else if (resultJson.result) { // Estructura de la API de respaldo
-    downloadUrl = resultJson.result.download?.url;
-    title = resultJson.result.metadata?.title || "audio";
-  }
-  if (!downloadUrl) {
-    throw new Error("No se encontró el enlace de descarga.");
-  }
-  title = title.replace(/[^\w\s]/gi, '').substring(0, 60);
-
-  // Intentar descargar el audio (con reintentos)
-  let audioBuffer;
-  const maxAudioAttempts = 2;
-  let audioError = null;
-  for (let attempt = 1; attempt <= maxAudioAttempts; attempt++) {
-    try {
-      const audioResponse = await fetch(downloadUrl);
-      if (!audioResponse.ok) {
-        throw new Error(`No se pudo descargar el audio. Código: ${audioResponse.status}`);
-      }
-      audioBuffer = await audioResponse.buffer();
-      break;
-    } catch (error) {
-      audioError = error;
-      if (attempt < maxAudioAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-    }
-  }
-
-  // Si la descarga falla y se usó la API principal, se recurre a la API de respaldo
-  if (!audioBuffer && usedAPI === 'primary') {
-    usedAPI = 'backup';
-    resultJson = null;
-    // Intentar obtener datos con la API de respaldo
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const response = await fetch(backupAPI);
-        const json = await response.json();
-        if (json.status !== 200 || !json.result || !json.result.download) {
-          throw new Error("Backup API: No se encontró el enlace de descarga.");
-        }
-        resultJson = json;
-        break;
-      } catch (error) {
-        lastError = error;
-        if (attempt < maxAttempts) continue;
-      }
-    }
-    if (resultJson && resultJson.result) {
-      downloadUrl = resultJson.result.download?.url;
-      title = resultJson.result.metadata?.title || "audio";
-      if (!downloadUrl) throw new Error("No se encontró el enlace de descarga.");
-      title = title.replace(/[^\w\s]/gi, '').substring(0, 60);
-      // Reintentar descarga del audio usando la URL del backup
-      for (let attempt = 1; attempt <= maxAudioAttempts; attempt++) {
-        try {
-          const audioResponse = await fetch(downloadUrl);
-          if (!audioResponse.ok) {
-            throw new Error(`No se pudo descargar el audio. Código: ${audioResponse.status}`);
-          }
-          audioBuffer = await audioResponse.buffer();
-          break;
-        } catch (error) {
-          audioError = error;
-          if (attempt < maxAudioAttempts) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-          }
-        }
-      }
-    }
-  }
-
-  if (!audioBuffer) {
-    throw audioError;
-  }
-
-  return { audioBuffer, title };
 }
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
@@ -151,6 +39,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   }
 
   isDownloadingArtist = true;
+  m.react('🕒');
   
   // Aviso inicial
   await conn.sendMessage(m.chat, { text: "🔔 *Iniciando descarga de música por artista.*\n\n⏳ Por favor, no interrumpas el proceso." });
@@ -195,6 +84,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   }
   
   isDownloadingArtist = false;
+  m.react('✅');
   await conn.sendMessage(m.chat, { text: "✅ *Descargas Finalizadas Exitosamente.*" });
 };
 

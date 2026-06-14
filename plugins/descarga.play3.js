@@ -1,11 +1,10 @@
 import yts from 'yt-search'
-import fs from 'fs'
-import axios from 'axios'
-import fetch from "node-fetch"
+import ytdl from 'yt-direct'
 
 const handler = async (m, { conn, command, text, usedPrefix }) => {
   if (!text) throw `Ejemplo: ${usedPrefix}${command} <su consulta>`
 
+  m.react('🕒')
   const search = await yts(text)
   const vid = search.videos[0]
   if (!vid) throw 'Vídeo no encontrado, por favor prueba con otro título~'
@@ -18,22 +17,28 @@ const handler = async (m, { conn, command, text, usedPrefix }) => {
   }, { quoted: m })
 
   try {
-let ouh = await fetch(`https://fastrestapis.fasturl.cloud/downup/ytdown-v1?name=${title}&format=mp3&quality=128&server=auto`)
-  let gyh = await ouh.json()
-//    const data = fetch(`https://fastrestapis.fasturl.cloud/downup/ytdown-v1?name=${title}&format=mp3&quality=128&server=auto`)
-//    const result = await data.json();
+    const audio = await ytdl(url, {
+      quality: 'audio',
+      filter: 'audioonly'
+    })
+
+    const chunks = [];
+    for await (const chunk of audio.stream()) {
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks);
 
     await conn.sendMessage(m.chat, {
-      audio: { url: gyh.result.media },
+      audio: buffer,
       mimetype: 'audio/mpeg',
       fileName: `${title}.mp3`,
-      caption: `*${gyh.result.title}*\n*Duración*: ${gyh.result.duration}`,
+      caption: `*${title}*\n*Duración*: ${timestamp}`,
       contextInfo: {
         externalAdReply: {
           showAdAttribution: true,
           mediaType: 2,
           mediaUrl: url,
-          title: gyh.result.title,
+          title: title,
           body: 'Audio Download',
           sourceUrl: url,
           thumbnail: await (await conn.getFile(thumbnail)).data,
@@ -41,6 +46,7 @@ let ouh = await fetch(`https://fastrestapis.fasturl.cloud/downup/ytdown-v1?name=
       },
     }, { quoted: m })
 
+    m.react('✅')
 
   } catch (error) {
     console.error('Error:', error.message)
@@ -53,6 +59,6 @@ handler.tags = ['Downloaders']
 handler.command = /^(play3)$/i
 
 handler.register = false
-handler.disable = true
+handler.disable = false
 
 export default handler

@@ -1,13 +1,8 @@
 import fetch from 'node-fetch';
-import ytdl from 'ytdl-core';
+import ytdl from 'yt-direct';
 import yts from 'yt-search';
 
-// 🔹 APIs de descarga
-const primaryAPI = (encodedUrl) => `https://theadonix-api.vercel.app/api/ytmp3?url=${encodedUrl}`;
-const backupAPI1 = (encodedUrl) => `https://api.vreden.my.id/api/ytmp3?url=${encodedUrl}`;
-const backupAPI2 = (encodedUrl) => `https://delirius-apiofc.vercel.app/download/ytmp3?url=${encodedUrl}`;
-
-// 🔹 Lista de API keys de búsqueda
+// Lista de API keys de búsqueda (opcional, para yt-search backup)
 const API_KEYS = [
   'AIzaSyA3-PRUEBA3',
   'AIzaSyA4-PRUEBA4',
@@ -19,7 +14,6 @@ const API_KEYS = [
   'AIzaSyA10-PRUEBA10'
 ];
 
-// Función para obtener una API key aleatoria
 function getRandomApiKey() {
   return API_KEYS[Math.floor(Math.random() * API_KEYS.length)];
 }
@@ -29,27 +23,16 @@ const handler = async (m, { conn, args, usedPrefix }) => {
     return conn.reply(m.chat, `✏️ Ingresa un título para buscar en YouTube.\n\nEjemplo:\n> ${usedPrefix}play Corazón Serrano - Mix Poco Yo`, m);
   }
 
-  // 🔹 Animación de carga
-  const mensajesCarga = [
-    "🔍 Buscando la canción...",
-    "🎵 Encontrando el mejor resultado...",
-    "⏳ Preparando tu audio...",
-    "📥 Descargando archivo...",
-    "✅ ¡Listo! Enviando..."
-  ];
-
-  for (let msg of mensajesCarga) {
-    await conn.sendMessage(m.chat, { text: msg }, { quoted: m });
-    await new Promise(res => setTimeout(res, 1000));
-  }
+  m.react('🕒');
 
   try {
     let videoInfo;
+    const query = args.join(" ");
 
-    // 1️⃣ Intentar búsqueda con YouTube Data API
+    // 1️⃣ Intentar búsqueda con YouTube Data API (opcional) o yt-search
     try {
       const API_KEY = getRandomApiKey();
-      const searchURL = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=1&q=${encodeURIComponent(args.join(" "))}&key=${API_KEY}`;
+      const searchURL = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=1&q=${encodeURIComponent(query)}&key=${API_KEY}`;
       const res = await fetch(searchURL);
       const data = await res.json();
 
@@ -64,9 +47,8 @@ const handler = async (m, { conn, args, usedPrefix }) => {
         throw new Error('Sin resultados API oficial');
       }
     } catch (err) {
-      console.warn('⚠️ Error en API oficial, usando yt-search:', err.message);
-      const results = await yts(args.join(" "));
-      if (!results.videos.length) throw new Error('No se encontraron resultados en yt-search');
+      const results = await yts(query);
+      if (!results.videos.length) throw new Error('No se encontraron resultados');
       const video = results.videos[0];
       videoInfo = {
         title: video.title,
@@ -75,76 +57,38 @@ const handler = async (m, { conn, args, usedPrefix }) => {
       };
     }
 
-    // 2️⃣ Descargar miniatura
-    const thumbnail = await (await fetch(videoInfo.thumbnail)).buffer();
+    // 2️⃣ Descargar con yt-direct (mejor calidad de audio)
+    const audio = await ytdl(videoInfo.url, {
+      quality: 'audio',
+      filter: 'audioonly'
+    });
 
-    // 3️⃣ Enviar información
+    // 3️⃣ Enviar información con miniatura
+    const caption = `🎥 *Video encontrado*\n📌 *Título:* ${videoInfo.title}\n🔗 *Enlace:* ${videoInfo.url}`;
     await conn.sendMessage(m.chat, {
-      image: thumbnail,
-      caption: `🎥 *Video encontrado*\n📌 *Título:* ${videoInfo.title}\n🔗 *Enlace:* ${videoInfo.url}`
+      image: { url: videoInfo.thumbnail },
+      caption: caption
     }, { quoted: m });
 
-    // 4️⃣ Intentar descarga con APIs
-    const encodedUrl = encodeURIComponent(videoInfo.url);
-    let audioBuffer;
-
-    try {
-      // API primaria
-      const res1 = await fetch(primaryAPI(encodedUrl));
-      if (res1.ok) {
-        const json = await res1.json();
-        if (json.result?.download_url) {
-          audioBuffer = await (await fetch(json.result.download_url)).buffer();
-        }
-      }
-    } catch {}
-
-    if (!audioBuffer) {
-      try {
-        // API de respaldo 1
-        const res2 = await fetch(backupAPI1(encodedUrl));
-        if (res2.ok) {
-          const json = await res2.json();
-          if (json.result?.download_url) {
-            audioBuffer = await (await fetch(json.result.download_url)).buffer();
-          }
-        }
-      } catch {}
+    // 4️⃣ Enviar audio (Buffer para evitar problemas de IP binding)
+    const chunks = [];
+    for await (const chunk of audio.stream()) {
+      chunks.push(chunk);
     }
+    const buffer = Buffer.concat(chunks);
 
-    if (!audioBuffer) {
-      try {
-        // API de respaldo 2 (DELIRIUS)
-        const res3 = await fetch(backupAPI2(encodedUrl));
-        if (res3.ok) {
-          const json = await res3.json();
-          if (json.result?.download_url) {
-            audioBuffer = await (await fetch(json.result.download_url)).buffer();
-          }
-        }
-      } catch {}
-    }
+    await conn.sendMessage(m.chat, {
+      audio: buffer,
+      mimetype: 'audio/mpeg',
+      fileName: `${videoInfo.title}.mp3`
+    }, { quoted: m });
 
-    // 5️⃣ Enviar audio
-    if (audioBuffer) {
-      await conn.sendMessage(m.chat, {
-        audio: audioBuffer,
-        mimetype: 'audio/mpeg',
-        fileName: `${videoInfo.title}.mp3`
-      }, { quoted: m });
-    } else {
-      // Último recurso: YTDL local
-      const audioStream = ytdl(videoInfo.url, { filter: 'audioonly', quality: 'highestaudio' });
-      await conn.sendMessage(m.chat, {
-        audio: { stream: audioStream },
-        mimetype: 'audio/mpeg',
-        fileName: `${videoInfo.title}.mp3`
-      }, { quoted: m });
-    }
+    m.react('✅');
 
   } catch (e) {
     console.error(e);
-    conn.reply(m.chat, '❗ Ocurrió un error al buscar o enviar el audio.', m);
+    conn.reply(m.chat, `❗ Ocurrió un error: ${e.message}`, m);
+    m.react('❌');
   }
 };
 
