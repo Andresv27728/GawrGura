@@ -1,9 +1,11 @@
 import fetch from 'node-fetch'
+import ytdl from 'yt-direct'
 
 let handler = async (m, { conn, usedPrefix, command, text }) => {
   if (!text) return m.reply(`🦈 *¡Eh buba~! Ingresa algo para buscar en YouTube desu~*\n🌊 *Ejemplo:* ${usedPrefix + command} Gawr Gura`)
 
   try {
+    m.react('🕒')
     // 🔍 Buscar video con Delirius API
     let searchRes = await fetch(`https://delirius-apiofc.vercel.app/search/ytsearch?q=${encodeURIComponent(text)}`)
     let search = await searchRes.json()
@@ -35,59 +37,34 @@ let handler = async (m, { conn, usedPrefix, command, text }) => {
       await m.reply(info)
     }
 
-    // 🎧 Descargar audio desde múltiples APIs
-    const apis = [
-      `https://theadonix-api.vercel.app/api/ytmp3?url=${encodeURIComponent(result.url)}`, // API 1
-      `https://yt1s.com/api/ajaxSearch/index?vid=${encodeURIComponent(result.url)}`, // API 2
-      `https://api.vevioz.com/api/button/mp3/${encodeURIComponent(result.url)}`, // API 3
-      `https://api.ytjar.download/audio?url=${encodeURIComponent(result.url)}` // API 4
-    ]
+    // 🎧 Descargar audio con yt-direct
+    const audio = await ytdl(result.url, {
+      quality: 'audio',
+      filter: 'audioonly'
+    })
 
-    let audioUrl = null
-    for (const api of apis) {
-      try {
-        const res = await fetch(api)
-        const json = await res.json()
-
-        // Verificar si la API devuelve un enlace de audio
-        if (json?.result?.audio) {
-          audioUrl = json.result.audio
-          break
-        } else if (json?.links?.mp3) {
-          audioUrl = json.links.mp3
-          break
-        } else if (json?.url) {
-          audioUrl = json.url
-          break
-        }
-      } catch (e) {
-        console.error(`Error con la API: ${api}`, e)
-      }
+    const chunks = [];
+    for await (const chunk of audio.stream()) {
+      chunks.push(chunk);
     }
-
-    if (!audioUrl) {
-      return m.reply('❌ *Hyaaa~ No pude conseguir el audio buba~.*')
-    }
-
-    // 🗣️ Descargar el buffer
-    let audioRes = await fetch(audioUrl)
-    if (!audioRes.ok) throw new Error('No se pudo descargar el archivo de audio.')
-
-    let audioBuffer = await audioRes.buffer()
+    const buffer = Buffer.concat(chunks);
 
     // 🎤 Enviar como nota de voz
     await conn.sendMessage(m.chat, {
-      audio: audioBuffer,
+      audio: buffer,
       mimetype: 'audio/mpeg',
       fileName: 'audio.mp3',
       ptt: true
     }, { quoted: m })
 
+    m.react('✅')
+
   } catch (e) {
+    console.error(e)
     m.reply(`❌ *Gyaa~ Algo salió mal desu~: ${e.message}*`)
     await m.react('✖️')
   }
 }
 
-handler.command = ['ytbuscar', 'ytsearch'] // Puedes personalizar el comando
+handler.command = ['ytbuscar', 'ytsearch']
 export default handler
